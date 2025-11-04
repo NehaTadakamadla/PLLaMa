@@ -1,1 +1,14 @@
-node_modules
+@'
+# OS junk
+.DS_Store
+frontend/.DS_Store
+
+# dependencies
+node_modules/
+
+# env & secrets
+.env
+*.env
+backend/.env
+frontend/.env
+'@ | Out-File -Encoding UTF8 .gitignore

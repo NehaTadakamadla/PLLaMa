@@ -1,7 +1,7 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
-import { createPageUrl } from "@/utils";
-import { User } from "@/entities/User";
+import { createPageUrl } from "./utils";
+import { User } from "./entities/User";
 
 export default function Layout({ children, currentPageName }) {
   const location = useLocation();

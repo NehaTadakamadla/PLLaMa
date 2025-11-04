@@ -1,5 +1,9 @@
 import React, { useState, useRef, useEffect } from "react";
-import { queryModel } from "../utils/queryModel"; // Ensure this points to your correct utils path
+import { queryModel } from "../utils/queryModel";
+
+// ✅ Voice utils: click-only speak, stop, STT, and locale helper
+import { speakFromUserGesture,speakSmart, stopAllTTS, listen, localeFor } from "../utils/voice";
+
 import {
   MessageSquare,
   Plus,
@@ -12,9 +16,12 @@ import {
   Leaf,
   Sparkles,
   Edit2,
+  Mic,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function Chatbot() {
@@ -24,111 +31,117 @@ export default function Chatbot() {
   const [activeChatId, setActiveChatId] = useState(null);
   const [inputValue, setInputValue] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Read-aloud state
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const speakingCtlRef = useRef(null);
+  // UI language: 'auto' | 'en' | 'hi' | 'te'
+  const [lang, setLang] = useState("auto");
+
   const messagesEndRef = useRef(null);
 
-  // Check authentication on mount
+  // Get last assistant message (return full object)
+  const getLastAssistantMessage = () => {
+    const active = chatHistory.find((c) => c.id === activeChatId);
+    if (!active) return null;
+    for (let i = active.messages.length - 1; i >= 0; i--) {
+      if (active.messages[i].role === "assistant") return active.messages[i];
+    }
+    return null;
+  };
+
+  // Auth check
   useEffect(() => {
     const token = localStorage.getItem("auth_token");
     const currentUser = localStorage.getItem("current_user");
-
     if (!token || !currentUser) {
       window.location.href = "/login";
       return;
     }
-
     setUser(JSON.parse(currentUser));
   }, []);
 
-  // Load chats from localStorage
+  // Load chats
   useEffect(() => {
-    const savedChats = localStorage.getItem("chatHistory");
-    if (savedChats) {
-      const parsedChats = JSON.parse(savedChats);
-      setChatHistory(parsedChats);
-      setActiveChatId(parsedChats[0]?.id || null);
+    const saved = localStorage.getItem("chatHistory");
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      setChatHistory(parsed);
+      setActiveChatId(parsed[0]?.id || null);
     } else {
-      const defaultChat = [
+      const seed = [
         {
           id: Date.now(),
           title: "Crop Disease Diagnosis",
           date: "Today",
-          messages: [
-            { role: "assistant", content: "Hello! How can I help with your crops?" },
-          ],
+          messages: [{ role: "assistant", content: "Hello! How can I help with your crops?" }],
         },
       ];
-      setChatHistory(defaultChat);
-      setActiveChatId(defaultChat[0].id);
-      localStorage.setItem("chatHistory", JSON.stringify(defaultChat));
+      setChatHistory(seed);
+      setActiveChatId(seed[0].id);
+      localStorage.setItem("chatHistory", JSON.stringify(seed));
     }
   }, []);
 
-  // Scroll to bottom whenever messages change
+  // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatHistory, activeChatId]);
 
-  const activeChat = chatHistory.find((chat) => chat.id === activeChatId);
+  const activeChat = chatHistory.find((c) => c.id === activeChatId);
   const messages = activeChat?.messages || [];
 
   const filteredChatHistory = chatHistory.filter((chat) =>
     chat.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const saveChats = (updatedChats) => {
-    setChatHistory(updatedChats);
-    localStorage.setItem("chatHistory", JSON.stringify(updatedChats));
+  const saveChats = (updated) => {
+    setChatHistory(updated);
+    localStorage.setItem("chatHistory", JSON.stringify(updated));
   };
 
-  // Send message
+  // Send message (text)
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!inputValue.trim()) return;
 
     const userMessage = { role: "user", content: inputValue };
 
-    // Add user message immediately
-    const updatedChats = chatHistory.map((chat) => {
-      if (chat.id === activeChatId) {
-        return { ...chat, messages: [...chat.messages, userMessage] };
-      }
-      return chat;
-    });
+    const updatedChats = chatHistory.map((chat) =>
+      chat.id === activeChatId ? { ...chat, messages: [...chat.messages, userMessage] } : chat
+    );
     saveChats(updatedChats);
     setInputValue("");
 
     try {
-      // Get AI reply as string
-      const aiResponse = await queryModel({ prompt: inputValue });
-      const assistantMessage = { role: "assistant", content: aiResponse };
-
-      // Add assistant reply using updatedChats (not old chatHistory)
-      const updatedChatsWithReply = updatedChats.map((chat) => {
-        if (chat.id === activeChatId) {
-          return { ...chat, messages: [...chat.messages, assistantMessage] };
-        }
-        return chat;
+      const { output, lang: replyLang } = await queryModel({
+        prompt: userMessage.content,
+        lang,
       });
-      saveChats(updatedChatsWithReply);
+
+      // Store reply with detected language so the button can read in that lang
+      const assistantMessage = { role: "assistant", content: output, replyLang };
+
+      const updatedWithReply = updatedChats.map((chat) =>
+        chat.id === activeChatId
+          ? { ...chat, messages: [...chat.messages, assistantMessage] }
+          : chat
+      );
+      saveChats(updatedWithReply);
+
+      // 🔇 IMPORTANT: No autoplay here. Read Aloud will only happen on button click.
     } catch (err) {
       console.error("Error fetching model response:", err);
-      const errorMessage = {
+      const errorMsg = {
         role: "assistant",
         content: "❌ Failed to get response from AI model. Please try again.",
       };
-
-      const updatedChatsWithError = updatedChats.map((chat) => {
-        if (chat.id === activeChatId) {
-          return { ...chat, messages: [...chat.messages, errorMessage] };
-        }
-        return chat;
-      });
-      saveChats(updatedChatsWithError);
+      const updatedWithError = updatedChats.map((chat) =>
+        chat.id === activeChatId ? { ...chat, messages: [...chat.messages, errorMsg] } : chat
+      );
+      saveChats(updatedWithError);
     }
   };
-
-
-
 
   // New chat
   const handleNewChat = () => {
@@ -143,26 +156,24 @@ export default function Chatbot() {
         },
       ],
     };
-    const updatedChats = [newChat, ...chatHistory];
-    saveChats(updatedChats);
+    const updated = [newChat, ...chatHistory];
+    saveChats(updated);
     setActiveChatId(newChat.id);
   };
 
   // Delete chat
   const handleDeleteChat = (id) => {
-    const updatedChats = chatHistory.filter((chat) => chat.id !== id);
-    saveChats(updatedChats);
-    if (activeChatId === id) setActiveChatId(updatedChats[0]?.id || null);
+    const updated = chatHistory.filter((c) => c.id !== id);
+    saveChats(updated);
+    if (activeChatId === id) setActiveChatId(updated[0]?.id || null);
   };
 
   // Rename chat
   const handleRenameChat = (id) => {
     const newTitle = prompt("Enter new chat title:");
     if (!newTitle) return;
-    const updatedChats = chatHistory.map((chat) =>
-      chat.id === id ? { ...chat, title: newTitle } : chat
-    );
-    saveChats(updatedChats);
+    const updated = chatHistory.map((c) => (c.id === id ? { ...c, title: newTitle } : c));
+    saveChats(updated);
   };
 
   // Logout
@@ -171,6 +182,69 @@ export default function Chatbot() {
     localStorage.removeItem("current_user");
     window.location.href = "/login";
   };
+
+  // Mic: capture speech in selected language and put into input
+  const handleMic = async () => {
+    try {
+      // Prevent TTS and STT overlapping
+      stopAllTTS();
+      const sttLocale = localeFor(lang === "auto" ? "en" : lang);
+      const heard = await listen(sttLocale);
+      setInputValue(heard || "");
+    } catch (e) {
+      console.error("STT error:", e);
+    }
+  };
+
+  // // Read aloud toggle: click -> read last reply; click again -> stop
+  // const handleSpeakLast = async () => {
+  //   const last = getLastAssistantMessage();
+  //   if (!last) return;
+
+  //   // Toggle: if currently speaking, stop
+  //   if (isSpeaking) {
+  //     stopAllTTS();
+  //     setIsSpeaking(false);
+  //     return;
+  //   }
+
+  //   // Pick language: prefer message.replyLang; otherwise UI choice
+  //   const replyLanguage = last.replyLang || lang || "te"; // default to te if you want Telugu by default
+  //   const langCode = replyLanguage === "auto" ? "te" : replyLanguage; // force te if auto
+
+  //   try {
+  //     // Start speaking on user gesture (this click)
+  //     await speakFromUserGesture(last.content, langCode);
+  //     // We don't get a "done" signal from browsers, so we mark speaking true briefly.
+  //     setIsSpeaking(true);
+
+  //     // Optional: rough timer to reset the icon; tweak multiplier as needed
+  //     const approxMs = Math.min(15000, Math.max(2000, last.content.length * 40));
+  //     setTimeout(() => setIsSpeaking(false), approxMs);
+  //   } catch (e) {
+  //     console.error("TTS error:", e);
+  //     setIsSpeaking(false);
+  //   }
+  // };
+  const handleSpeakLast = async () => {
+  if (isSpeaking && speakingCtlRef.current) {
+    speakingCtlRef.current.stop();
+    speakingCtlRef.current = null;
+    setIsSpeaking(false);
+    return;
+  }
+  const last = getLastAssistantMessage();
+  if (!last) return;
+
+  const replyLanguage = last.replyLang || lang; // 'te' | 'hi' | 'en'
+  const ctl = speakSmart(last.content, replyLanguage); // Telugu will auto-fallback online
+  speakingCtlRef.current = ctl;
+  setIsSpeaking(true);
+  try { await ctl.done; } finally {
+    speakingCtlRef.current = null;
+    setIsSpeaking(false);
+  }
+};
 
   if (!user) {
     return (
@@ -235,7 +309,9 @@ export default function Chatbot() {
 
             {/* Chat History */}
             <div className="flex-1 overflow-y-auto p-4">
-              <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">Recent Chats</h3>
+              <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">
+                Recent Chats
+              </h3>
               <div className="space-y-2">
                 {filteredChatHistory.map((chat) => (
                   <button
@@ -247,7 +323,9 @@ export default function Chatbot() {
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white truncate">{chat.title}</p>
+                        <p className="text-sm font-medium text-white truncate">
+                          {chat.title}
+                        </p>
                         <p className="text-xs text-gray-400 mt-1">{chat.date}</p>
                       </div>
                       <div className="flex gap-1">
@@ -285,7 +363,9 @@ export default function Chatbot() {
                   </span>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate">{user?.full_name || "User"}</p>
+                  <p className="text-sm font-medium text-white truncate">
+                    {user?.full_name || "User"}
+                  </p>
                   <p className="text-xs text-gray-400 truncate">{user?.email}</p>
                 </div>
               </div>
@@ -317,6 +397,21 @@ export default function Chatbot() {
           <div className="flex items-center gap-2">
             <MessageSquare className="w-5 h-5 text-green-600" />
             <h1 className="text-lg font-semibold text-gray-900">AgriBot Chat</h1>
+          </div>
+          {/* Language selector */}
+          <div className="ml-auto flex items-center gap-2">
+            <label className="text-sm text-gray-600">Language:</label>
+            <select
+              value={lang}
+              onChange={(e) => setLang(e.target.value)}
+              className="border border-gray-300 rounded px-2 py-1 text-sm"
+              title="Select input/output language"
+            >
+              <option value="auto">Auto</option>
+              <option value="en">English</option>
+              <option value="hi">हिन्दी</option>
+              <option value="te">తెలుగు</option>
+            </select>
           </div>
         </header>
 
@@ -357,24 +452,77 @@ export default function Chatbot() {
           </div>
         </div>
 
+        {/* Composer */}
         <div className="border-t border-gray-200 bg-white p-6">
           <div className="max-w-3xl mx-auto">
-            <form onSubmit={handleSendMessage} className="flex gap-3">
+            <form onSubmit={handleSendMessage} className="flex gap-3 items-center">
+              <button
+                type="button"
+                onClick={handleMic}
+                className="h-14 w-14 flex items-center justify-center rounded-xl border border-gray-300 hover:bg-gray-50"
+                title="Speak (uses selected language)"
+              >
+                <Mic className="w-5 h-5 text-gray-700" />
+              </button>
+
               <Input
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                placeholder="Ask me anything about farming..."
+                placeholder={
+                  lang === "hi"
+                    ? "कृषि से जुड़ा कुछ भी पूछें..."
+                    : lang === "te"
+                    ? "వ్యవసాయం గురించి ఏదైనా అడగండి..."
+                    : "Ask me anything about farming..."
+                }
                 className="flex-1 h-14 px-6 text-base border-gray-300 focus:border-green-500 focus:ring-green-500"
               />
+
+              {/* Read-aloud toggle button (click-only, no autoplay) */}
+              {(() => {
+                const last = getLastAssistantMessage();
+                const hasLast = !!last;
+                const title =
+                  !hasLast
+                    ? "Nothing to read yet"
+                    : isSpeaking
+                    ? "Stop reading"
+                    : "Read last reply";
+                return (
+                  <button
+                    type="button"
+                    onClick={handleSpeakLast}
+                    disabled={!hasLast}
+                    className={`h-14 w-14 flex items-center justify-center rounded-xl border border-gray-300 ${
+                      hasLast ? "hover:bg-gray-50" : "opacity-50 cursor-not-allowed"
+                    }`}
+                    title={title}
+                  >
+                    {hasLast ? (
+                      isSpeaking ? (
+                        <Volume2 className="w-5 h-5 text-green-600" />
+                      ) : (
+                        <Volume2 className="w-5 h-5 text-gray-700" />
+                      )
+                    ) : (
+                      <VolumeX className="w-5 h-5 text-gray-500" />
+                    )}
+                  </button>
+                );
+              })()}
+
               <Button
                 type="submit"
                 className="h-14 px-6 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 transition-all duration-200"
+                title="Send"
               >
                 <Send className="w-5 h-5" />
               </Button>
             </form>
+
             <p className="text-xs text-gray-500 mt-3 text-center">
-              All chats are now saved permanently in your browser.
+              All chats are saved in your browser. Tip: set the language to हिन्दी/తెలుగు
+              before using the mic for best transcription.
             </p>
           </div>
         </div>
@@ -390,4 +538,3 @@ export default function Chatbot() {
     </div>
   );
 }
-

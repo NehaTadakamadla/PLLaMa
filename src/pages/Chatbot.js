@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
+import { listen, speak, canUseVoice } from "../utils/voice";
+import { queryModel } from "../utils/queryModel";
 import { User } from "@/entities/User";
 import { createPageUrl } from "@/utils";
 import { 
@@ -60,25 +62,29 @@ export default function Chatbot() {
     window.location.href = createPageUrl("Landing");
   };
 
-  const handleSendMessage = (e) => {
+  const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!inputValue.trim()) return;
 
     // Add user message
-    const newMessages = [...messages, { role: "user", content: inputValue }];
+    const userText = inputValue.trim();
+    const newMessages = [...messages, { role: "user", content: userText }];
     setMessages(newMessages);
     setInputValue("");
 
-    // Simulate bot response (non-functional, just for UI demo)
-    setTimeout(() => {
-      setMessages([
-        ...newMessages,
-        {
-          role: "assistant",
-          content: "This is a UI demonstration. The chatbot is not connected to any backend or API."
-        }
-      ]);
-    }, 1000);
+    // // Simulate bot response (non-functional, just for UI demo)
+    // setTimeout(() => {
+    //   setMessages([
+    //     ...newMessages,
+    //     {
+    //       role: "assistant",
+    //       content: "This is a UI demonstration. The chatbot is not connected to any backend or API."
+    //     }
+    //   ]);
+    // }, 1000);
+
+    const reply = await queryModel({ prompt: userText });
+    setMessages([...newMessages, { role: "assistant", content: reply }]);
   };
 
   const handleNewChat = () => {
@@ -243,7 +249,20 @@ export default function Chatbot() {
                       : "bg-gray-100 text-gray-900"
                   }`}
                 >
+                  <div className="flex items-center gap-2">
                   <p className="text-[15px] leading-relaxed">{message.content}</p>
+
+                  {message.role === "assistant" && canUseVoice() && (
+                    <button
+                      onClick={() => speak(message.content)}
+                      title="Read aloud"
+                      className="ml-2 p-1 rounded-full hover:bg-gray-200 transition"
+                    >
+                      🔊
+                    </button>
+                  )}
+                </div>
+
                 </div>
                 {message.role === "user" && (
                   <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center flex-shrink-0">
@@ -268,6 +287,27 @@ export default function Chatbot() {
                 placeholder="Ask me anything about farming..."
                 className="flex-1 h-14 px-6 text-base border-gray-300 focus:border-green-500 focus:ring-green-500"
               />
+
+              <Button
+                type="button"
+                className="h-14 px-4 bg-green-500 hover:bg-green-600 transition-all duration-200"
+                onClick={async () => {
+                  try {
+                    const heard = await listen();
+                    setInputValue(heard); // show recognized text in input box
+
+                    // optionally send immediately after hearing:
+                    document.querySelector("form").requestSubmit();
+                  } catch (err) {
+                    alert("Voice not supported or failed. Try again.");
+                    console.error(err);
+                  }
+                }}
+              >
+                🎤 Speak
+              </Button>
+
+
               <Button
                 type="submit"
                 className="h-14 px-6 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 transition-all duration-200"

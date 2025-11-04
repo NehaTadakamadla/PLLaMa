@@ -1,26 +1,18 @@
-// frontend/src/utils/queryModel.js
-export async function queryModel({prompt}) {
+export async function queryModel({ prompt, lang = "auto" }) {
   try {
-    const res = await fetch("http://localhost:5000/api/model/generate", { // Or your ngrok URL
+    const res = await fetch("http://localhost:5000/api/model/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({prompt}),
+      body: JSON.stringify({ prompt, lang }),
     });
 
-    if (!res.ok) throw new Error(`Model API returned status ${res.status}`);
+    if (!res.ok) throw new Error(`Model API returned ${res.status}`);
 
     const data = await res.json();
-
-    // Ensure we return string only
-    if (typeof data.output === "string") {
-      return data.output;
-    } else if (data.output?.text) {
-      return data.output.text;
-    } else {
-      return JSON.stringify(data.output); // fallback
-    }
+    // backend returns { output: "<translated reply>", lang: "<hi|te|en>" }
+    return data;
   } catch (err) {
     console.error("queryModel error:", err);
-    return "❌ Failed to get response from AI model.";
+    return { output: "❌ मॉडल से उत्तर प्राप्त करने में असफल।", lang: lang };
   }
 }

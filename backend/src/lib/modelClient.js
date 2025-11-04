@@ -1,7 +1,7 @@
 // backend/src/lib/modelClient.js
 import fetch from "node-fetch";
 
-const MODEL_URL = "https://unmelancholy-kylah-higher.ngrok-free.dev/generate";
+const MODEL_URL = "https://noneconomically-nontenantable-leanna.ngrok-free.dev/generate";
 
 async function modelClient(prompt) {
   try {
@@ -15,7 +15,6 @@ async function modelClient(prompt) {
 
     const data = await res.json();
 
-    // Always return string
     if (typeof data.response === "string") {
       return data.response;
     } else if (data.response?.text) {
@@ -30,3 +29,6 @@ async function modelClient(prompt) {
 }
 
 export default modelClient;
+
+
+

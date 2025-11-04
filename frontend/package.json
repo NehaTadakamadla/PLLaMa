@@ -21,17 +21,14 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.20",
-    "customize-cra": "^1.0.0",
     "postcss": "^8.4.38",
-    "react-app-rewired": "^2.2.1",
     "tailwindcss": "^3.4.14",
     "vite": "^7.1.9"
   },
   "scripts": {
-    "dev": "react-app-rewired start",
-    "start": "react-app-rewired start",
-    "build": "react-app-rewired build",
-    "test": "react-app-rewired test",
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
   "browserslist": {
