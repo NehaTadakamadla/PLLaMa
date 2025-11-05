@@ -4,6 +4,7 @@ import {
   MessageSquare,
   Plus,
   Search,
+  Globe,
   Trash2,
   LogOut,
   Send,
@@ -17,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { motion, AnimatePresence } from "framer-motion";
+import { LlamaOutput } from "../utils/LlamaOutput";
 
 export default function Chatbot() {
   const [user, setUser] = useState(null);
@@ -24,6 +26,7 @@ export default function Chatbot() {
   const [chatHistory, setChatHistory] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
   const [inputValue, setInputValue] = useState("");
+  const [useWebSearch, setUseWebSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -212,7 +215,27 @@ export default function Chatbot() {
 
     try {
       // Get AI reply
-      const aiResponse = await queryModel({ prompt: inputValue });
+      // Read latest current_user from localStorage (Login/SignIn now store full profile)
+      const stored = localStorage.getItem("current_user");
+      let currentUser = null;
+      try {
+        currentUser = stored ? JSON.parse(stored) : null;
+      } catch (err) {
+        currentUser = null;
+      }
+
+      const user_location = currentUser?.location || "india";
+      // user_name from stored profile or fallback to 'User'
+      const user_name = currentUser?.username || "User";
+      const chat_id = activeChatId;
+
+      const aiResponse = await queryModel({
+        user_query: inputValue,
+        user_id: chat_id,
+        user_location,
+        user_name,
+        use_web_search: useWebSearch,
+      });
       const assistantMessage = { role: "assistant", content: String(aiResponse) };
 
       // Optimistically add assistant message
@@ -543,11 +566,11 @@ export default function Chatbot() {
               <div className="flex items-center gap-3 mb-3 p-3 bg-gray-800 rounded-lg">
                 <div className="w-10 h-10 bg-green-600 rounded-full flex items-center justify-center">
                   <span className="text-white font-medium">
-                    {user?.full_name?.charAt(0) || user?.email?.charAt(0) || "U"}
+                    {user?.full_name?.charAt(0).toUpperCase() || user?.email?.charAt(0).toUpperCase() || "U"}
                   </span>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate">{user?.full_name || "User"}</p>
+                  <p className="text-sm font-medium text-white truncate">{user?.username || "User"}</p>
                   <p className="text-xs text-gray-400 truncate">{user?.email}</p>
                 </div>
               </div>
@@ -607,16 +630,26 @@ export default function Chatbot() {
                         : "bg-gray-100 text-gray-900"
                     }`}
                   >
-                    <p className="text-[15px] leading-relaxed">
-                      {typeof message.content === "string"
-                        ? message.content
-                        : JSON.stringify(message.content)}
-                    </p>
+                    {
+                      (
+                        message.role === "user" && 
+                        <p className="text-[15px] leading-relaxed">
+                          {typeof message.content === "string"
+                            ? message.content
+                            : JSON.stringify(message.content)}
+                        </p>
+                      ) 
+                      ||
+                      (
+                        message.role === "assistant" && 
+                        <LlamaOutput content={message.content} />
+                      )
+                    }
                   </div>
                   {message.role === "user" && (
                     <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center flex-shrink-0">
                       <span className="text-gray-700 font-medium">
-                        {user?.full_name?.charAt(0) || user?.email?.charAt(0) || "U"}
+                        {user?.full_name?.charAt(0).toUpperCase() || user?.email?.charAt(0).toUpperCase() || "U"}
                       </span>
                     </div>
                   )}
@@ -651,13 +684,25 @@ export default function Chatbot() {
                 disabled={!activeChatId || submitting}
                 className="flex-1 h-14 px-6 text-base border-gray-300 focus:border-green-500 focus:ring-green-500 disabled:opacity-50"
               />
-              <Button
-                type="submit"
-                disabled={!activeChatId || !inputValue.trim() || submitting}
-                className="h-14 px-6 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 transition-all duration-200 disabled:opacity-50"
-              >
-                <Send className="w-5 h-5" />
-              </Button>
+              <div className="flex items-center gap-2">
+                {/* Web search toggle button */}
+                <button
+                  type="button"
+                  onClick={() => setUseWebSearch((s) => !s)}
+                  title="Toggle web search"
+                  className={`h-10 w-10 flex items-center justify-center rounded ${useWebSearch ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-600'} hover:opacity-90 transition-colors`}
+                >
+                  <Globe className="w-4 h-4" />
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={!activeChatId || !inputValue.trim() || submitting}
+                  className="h-10 w-10 rounded bg-gradient-to-r flex items-center justify-center from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 transition-all duration-200 disabled:opacity-50"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </div>
             </form>
           </div>
         </div>

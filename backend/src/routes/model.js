@@ -6,10 +6,10 @@ const router = express.Router();
 
 router.post("/generate", async (req, res) => {
   try {
-    const {prompt} = req.body;
-    if (!prompt) return res.status(400).json({ error: "Prompt is required" });
+    const { user_query, user_id, user_location, user_name, use_web_search } = req.body;
+    if (!user_query || !user_id) return res.status(400).json({ error: "user_query and user_id are required" });
 
-    const output = await modelClient(prompt); // string guaranteed
+    const output = await modelClient({ user_query, user_id, user_location, user_name, use_web_search }); // string guaranteed
     res.json({ output });
   } catch (err) {
     console.error("Model route error:", err);

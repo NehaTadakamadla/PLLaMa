@@ -44,7 +44,19 @@ export default function SignIn() {
       if (!loginRes.ok) throw new Error(loginData.error || "Login after signup failed");
 
       localStorage.setItem("auth_token", loginData.token);
-      localStorage.setItem("current_user", JSON.stringify(loginData.user));
+
+      // Fetch full user profile and store
+      try {
+        const userResp = await fetch(`http://localhost:5000/api/users/${encodeURIComponent(loginData.user.email)}`);
+        if (userResp.ok) {
+          const fullUser = await userResp.json();
+          localStorage.setItem("current_user", JSON.stringify(fullUser));
+        } else {
+          localStorage.setItem("current_user", JSON.stringify(loginData.user));
+        }
+      } catch (err) {
+        localStorage.setItem("current_user", JSON.stringify(loginData.user));
+      }
 
       navigate("/chatbot");
     } catch (err) {

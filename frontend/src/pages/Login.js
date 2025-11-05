@@ -29,9 +29,23 @@ export default function Login() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Login failed");
 
-      // Save token and user
+      // Save token
       localStorage.setItem("auth_token", data.token);
-      localStorage.setItem("current_user", JSON.stringify(data.user));
+
+      // Try to fetch full user profile from backend and store it
+      try {
+        const userResp = await fetch(`http://localhost:5000/api/users/${encodeURIComponent(data.user.email)}`);
+        if (userResp.ok) {
+          const fullUser = await userResp.json();
+          localStorage.setItem("current_user", JSON.stringify(fullUser));
+        } else {
+          // fallback to login response user object
+          localStorage.setItem("current_user", JSON.stringify(data.user));
+        }
+      } catch (err) {
+        // on error, fallback
+        localStorage.setItem("current_user", JSON.stringify(data.user));
+      }
 
       // Redirect to Chatbot page
       navigate("/chatbot");

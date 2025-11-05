@@ -9,6 +9,7 @@ import authRoutes from "./routes/auth.js";
 import chatRoutes from "./routes/chatRoutes.js";
 import historyRoutes from "./routes/historyRoutes.js";
 import modelRouter from "./routes/model.js"; // corrected path
+import usersRouter from "./routes/users.js";
 
 dotenv.config();
 const app = express();
@@ -26,6 +27,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/history", historyRoutes);
 app.use("/api/model", modelRouter); // moved after app creation
+app.use("/api/users", usersRouter);
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
