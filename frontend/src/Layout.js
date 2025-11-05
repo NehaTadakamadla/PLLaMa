@@ -44,13 +44,13 @@ export default function Layout({ children, currentPageName }) {
             </Link>
 
             <div className="hidden md:flex items-center gap-8">
-              <a href="#home" className="text-gray-600 hover:text-green-600 transition-colors font-medium">
+              <a href="/#home" className="text-gray-600 hover:text-green-600 transition-colors font-medium">
                 Home
               </a>
-              <a href="#about" className="text-gray-600 hover:text-green-600 transition-colors font-medium">
+              <a href="/#about" className="text-gray-600 hover:text-green-600 transition-colors font-medium">
                 About Us
               </a>
-              <a href="#feedback" className="text-gray-600 hover:text-green-600 transition-colors font-medium">
+              <a href="/#feedback" className="text-gray-600 hover:text-green-600 transition-colors font-medium">
                 Feedback
               </a>
               {user ? (

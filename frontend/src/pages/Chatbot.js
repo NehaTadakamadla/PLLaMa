@@ -12,6 +12,7 @@ import {
   Leaf,
   Sparkles,
   Edit2,
+  Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +25,15 @@ export default function Chatbot() {
   const [activeChatId, setActiveChatId] = useState(null);
   const [inputValue, setInputValue] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [editingChatId, setEditingChatId] = useState(null);
+  const [tempTitle, setTempTitle] = useState("");
+  const [originalTitle, setOriginalTitle] = useState("");
+  const titleInputRef = useRef(null);
   const messagesEndRef = useRef(null);
+
+  const API_BASE = "http://localhost:5000/api/history";
 
   // Check authentication on mount
   useEffect(() => {
@@ -39,61 +48,44 @@ export default function Chatbot() {
     setUser(JSON.parse(currentUser));
   }, []);
 
-  // Load chats from localStorage
-  useEffect(() => {
-    // Try to load from server if authenticated
+  // Load chats from server
+  const fetchChats = async () => {
     const token = localStorage.getItem("auth_token");
-    const load = async () => {
-      if (token) {
-        try {
-          const res = await fetch("http://localhost:5000/api/history/conversations", {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (res.ok) {
-            const data = await res.json();
-            // convert server conversations to frontend shape (use _id as id)
-            const convs = data.conversations.map((c) => ({
-              id: c._id,
-              _id: c._id,
-              title: c.title || "Chat",
-              date: new Date(c.createdAt).toLocaleDateString(),
-              messages: c.messages,
-            }));
-            if (convs.length) {
-              setChatHistory(convs);
-              setActiveChatId(convs[0]?.id || null);
-              localStorage.setItem("chatHistory", JSON.stringify(convs));
-              return;
-            }
-          }
-        } catch (err) {
-          console.error("Failed to load conversations from server:", err);
+    if (!token) return;
+
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/conversations`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const convs = data.conversations.map((c) => ({
+          id: c._id,
+          title: c.title || "New Chat",
+          date: new Date(c.createdAt).toLocaleDateString(),
+          messages: c.messages || [],
+        }));
+        setChatHistory(convs);
+        if (convs.length > 0 && !activeChatId) {
+          setActiveChatId(convs[0].id);
         }
       }
+    } catch (err) {
+      console.error("Failed to load conversations from server:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      // Fallback to local default
-      const defaultChat = [
-        {
-          id: Date.now(),
-          title: "New Chat",
-          date: "Today",
-          messages: [
-            { role: "assistant", content: "Hello! How can I help with your crops?" },
-          ],
-        },
-      ];
-      setChatHistory(defaultChat);
-      setActiveChatId(defaultChat[0].id);
-      localStorage.setItem("chatHistory", JSON.stringify(defaultChat));
-    };
-
-    load();
+  useEffect(() => {
+    fetchChats();
   }, []);
 
   // Scroll to bottom whenever messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatHistory, activeChatId]);
+  }, [activeChatId, chatHistory]);
 
   const activeChat = chatHistory.find((chat) => chat.id === activeChatId);
   const messages = activeChat?.messages || [];
@@ -102,103 +94,189 @@ export default function Chatbot() {
     chat.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const saveChats = async (updatedChats) => {
-    setChatHistory(updatedChats);
-    localStorage.setItem("chatHistory", JSON.stringify(updatedChats));
-
-    // Persist each changed conversation to backend when authenticated
+  const updateConversation = async (convId, payload) => {
     const token = localStorage.getItem("auth_token");
-    if (!token) return;
+    if (!token) return false;
 
-    // Upsert each conversation: detect server id with _id or ObjectId-like id
-    // Work on a mutable copy so we can update ids after creation
-    let localUpdated = [...updatedChats];
-    const isObjectId = (s) => /^[0-9a-fA-F]{24}$/.test(String(s));
+    try {
+      const res = await fetch(`${API_BASE}/conversations/${convId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      return res.ok;
+    } catch (err) {
+      console.error("Failed to update conversation:", err);
+      return false;
+    }
+  };
 
-    for (let i = 0; i < localUpdated.length; i++) {
-      const chat = localUpdated[i];
-      try {
-        const payload = { title: chat.title, messages: chat.messages };
-        const serverId = chat._id || (isObjectId(chat.id) ? chat.id : null);
+  const createConversation = async (payload) => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) return null;
 
-        if (serverId) {
-          // update existing
-          await fetch(`http://localhost:5000/api/history/conversations/${serverId}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify(payload),
-          });
-          // ensure both id and _id are present locally
-          if (!chat._id && isObjectId(chat.id)) {
-            localUpdated[i] = { ...chat, _id: chat.id };
-          }
-        }
-      } catch (err) {
-        console.error("Failed to persist conversation:", err);
+    try {
+      const res = await fetch(`${API_BASE}/conversations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.conversation;
       }
+      return null;
+    } catch (err) {
+      console.error("Failed to create conversation:", err);
+      return null;
+    }
+  };
+
+  const deleteConversation = async (convId) => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) return false;
+
+    try {
+      const res = await fetch(`${API_BASE}/conversations/${convId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return res.ok;
+    } catch (err) {
+      console.error("Failed to delete conversation:", err);
+      return false;
+    }
+  };
+
+  // Refetch chats after mutations
+  const refetchChats = () => {
+    fetchChats();
+  };
+
+  const handleSaveTitle = async (id) => {
+    const trimmedTitle = tempTitle.trim();
+    if (!trimmedTitle) {
+      setEditingChatId(null);
+      setTempTitle("");
+      setOriginalTitle("");
+      return;
     }
 
-    // If we changed any ids, update the state once
-    setChatHistory(localUpdated);
-    localStorage.setItem("chatHistory", JSON.stringify(localUpdated));
+    const currentChat = chatHistory.find((c) => c.id === id);
+    if (!currentChat) return;
+
+    // Optimistic update
+    setChatHistory((prev) =>
+      prev.map((chat) =>
+        chat.id === id ? { ...chat, title: trimmedTitle } : chat
+      )
+    );
+
+    const success = await updateConversation(id, {
+      title: trimmedTitle,
+      messages: currentChat.messages,
+    });
+
+    if (!success) {
+      // Rollback
+      setChatHistory((prev) =>
+        prev.map((chat) =>
+          chat.id === id ? { ...chat, title: originalTitle } : chat
+        )
+      );
+      alert("Failed to update title. Please try again.");
+    }
+
+    setEditingChatId(null);
+    setTempTitle("");
+    setOriginalTitle("");
   };
 
   // Send message
   const handleSendMessage = async (e) => {
     e.preventDefault();
-    if (!inputValue.trim()) return;
+    if (!inputValue.trim() || submitting || !activeChatId) return;
 
-  const userMessage = { role: "user", content: String(inputValue) };
+    setSubmitting(true);
+    const userMessage = { role: "user", content: String(inputValue) };
 
-    // Add user message immediately
-    const updatedChats = chatHistory.map((chat) => {
-      if (chat.id === activeChatId) {
-        return { ...chat, messages: [...chat.messages, userMessage] };
-      }
-      return chat;
-    });
-    saveChats(updatedChats);
+    // Optimistically add user message
+    setChatHistory((prev) =>
+      prev.map((chat) =>
+        chat.id === activeChatId
+          ? { ...chat, messages: [...chat.messages, userMessage] }
+          : chat
+      )
+    );
     setInputValue("");
 
     try {
-      // Get AI reply as string
-  const aiResponse = await queryModel({ prompt: inputValue });
-  const assistantMessage = { role: "assistant", content: String(aiResponse) };
+      // Get AI reply
+      const aiResponse = await queryModel({ prompt: inputValue });
+      const assistantMessage = { role: "assistant", content: String(aiResponse) };
 
-      // Add assistant reply using updatedChats (not old chatHistory)
-      const updatedChatsWithReply = updatedChats.map((chat) => {
-        if (chat.id === activeChatId) {
-          return { ...chat, messages: [...chat.messages, assistantMessage] };
-        }
-        return chat;
+      // Optimistically add assistant message
+      setChatHistory((prev) =>
+        prev.map((chat) =>
+          chat.id === activeChatId
+            ? { ...chat, messages: [...chat.messages, assistantMessage] }
+            : chat
+        )
+      );
+
+      // Update on server
+      const activeChatCopy = { ...activeChat, messages: [...messages, userMessage, assistantMessage] };
+      const success = await updateConversation(activeChatId, {
+        title: activeChatCopy.title,
+        messages: activeChatCopy.messages,
       });
-      saveChats(updatedChatsWithReply);
+
+      if (!success) {
+        throw new Error("Server update failed");
+      }
     } catch (err) {
-      console.error("Error fetching model response:", err);
+      console.error("Error fetching model response or updating:", err);
       const errorMessage = {
         role: "assistant",
-        content: String("❌ Failed to get response from AI model. Please try again."),
+        content: "❌ Failed to get response from AI model. Please try again.",
       };
 
-      const updatedChatsWithError = updatedChats.map((chat) => {
-        if (chat.id === activeChatId) {
-          return { ...chat, messages: [...chat.messages, errorMessage] };
-        }
-        return chat;
+      // Rollback to add error message instead
+      setChatHistory((prev) =>
+        prev.map((chat) =>
+          chat.id === activeChatId
+            ? { ...chat, messages: [...chat.messages.slice(0, -1), errorMessage] } // Remove optimistic assistant, add error
+            : chat
+        )
+      );
+
+      // Still try to save the user msg + error
+      const activeChatCopy = { ...activeChat, messages: [...messages, userMessage, errorMessage] };
+      await updateConversation(activeChatId, {
+        title: activeChatCopy.title,
+        messages: activeChatCopy.messages,
       });
-      saveChats(updatedChatsWithError);
+    } finally {
+      setSubmitting(false);
     }
   };
 
-
-
-
   // New chat
-  const handleNewChat = () => {
-    const newChat = {
-      id: Date.now(),
-      title: "New Chat",
-      date: "Today",
+  const handleNewChat = async () => {
+    if (submitting) return;
+
+    // Compute next numbered title
+    let nextNum = 1;
+    chatHistory.forEach((chat) => {
+      const match = chat.title.match(/^New Chat (\d+)$/);
+      if (match) {
+        nextNum = Math.max(nextNum, parseInt(match[1]) + 1);
+      }
+    });
+    const newTitle = `New Chat ${nextNum}`;
+
+    const newPayload = {
+      title: newTitle,
       messages: [
         {
           role: "assistant",
@@ -206,84 +284,71 @@ export default function Chatbot() {
         },
       ],
     };
-    const updatedChats = [newChat, ...chatHistory];
-    saveChats(updatedChats);
-    setActiveChatId(newChat.id);
 
-    // Try to persist immediately if authenticated
-    const token = localStorage.getItem("auth_token");
-    if (token) {
-      (async () => {
-        try {
-          const res = await fetch(`http://localhost:5000/api/history/conversations`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ title: newChat.title, messages: newChat.messages }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            const serverConv = data.conversation;
-            const after = [ { ...newChat, id: serverConv._id, _id: serverConv._id }, ...chatHistory];
-            setChatHistory(after);
-            localStorage.setItem("chatHistory", JSON.stringify(after));
-            setActiveChatId(serverConv._id);
-          }
-        } catch (err) {
-          console.error("Failed to persist new conversation:", err);
-        }
-      })();
+    const newConv = await createConversation(newPayload);
+    if (newConv) {
+      // Add to state immediately
+      const newChat = {
+        id: newConv._id,
+        title: newConv.title,
+        date: new Date(newConv.createdAt).toLocaleDateString(),
+        messages: newConv.messages,
+      };
+      setChatHistory((prev) => [newChat, ...prev]);
+      setActiveChatId(newChat.id);
+    } else {
+      alert("Failed to create new chat. Please try again.");
     }
+  };
+
+  // Start rename (inline edit)
+  const handleStartRename = (id) => {
+    if (submitting) return;
+
+    const currentChat = chatHistory.find((chat) => chat.id === id);
+    if (!currentChat) return;
+
+    setOriginalTitle(currentChat.title);
+    setTempTitle(currentChat.title);
+    setEditingChatId(id);
+
+    // Focus input after render
+    setTimeout(() => {
+      titleInputRef.current?.focus();
+    }, 0);
   };
 
   // Delete chat
   const handleDeleteChat = async (id) => {
-    const updatedChats = chatHistory.filter((chat) => chat.id !== id);
-    await saveChats(updatedChats);
-    if (activeChatId === id) setActiveChatId(updatedChats[0]?.id || null);
+    if (submitting || editingChatId) return;
 
-    // Delete on server if it has an _id and user is authenticated
-    const token = localStorage.getItem("auth_token");
-    if (token) {
-      // find chat in updatedChats (it may have _id)
-      const maybe = (chatHistory.find((c) => c.id === id || c._id === id) || {});
-      const convId = maybe._id || (String(id).length === 24 ? id : null);
-      if (convId) {
-        try {
-          await fetch(`http://localhost:5000/api/history/conversations/${convId}`, {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${token}` },
-          });
-        } catch (err) {
-          console.error("Failed to delete conv on server:", err);
-        }
+    // Optimistically remove from state
+    const wasActive = id === activeChatId;
+    const optimisticHistory = chatHistory.filter((chat) => chat.id !== id);
+    setChatHistory(optimisticHistory);
+
+    if (wasActive) {
+      const newActiveId = optimisticHistory[0]?.id || null;
+      setActiveChatId(newActiveId);
+    }
+
+    const success = await deleteConversation(id);
+    if (!success) {
+      // Rollback on failure
+      setChatHistory(chatHistory);
+      if (wasActive) {
+        setActiveChatId(id);
       }
+      alert("Failed to delete chat. Please try again.");
+    } else {
+      // Refetch to ensure sync
+      refetchChats();
     }
   };
 
-  // Rename chat
-  const handleRenameChat = async (id) => {
-    const newTitle = prompt("Enter new chat title:");
-    if (!newTitle) return;
-    const updatedChats = chatHistory.map((chat) => (chat.id === id ? { ...chat, title: newTitle } : chat));
-    await saveChats(updatedChats);
-
-    // Persist title change using the up-to-date entry
-    const token = localStorage.getItem("auth_token");
-    if (token) {
-      const updated = updatedChats.find((c) => c.id === id || c._id === id);
-      const convId = updated?._id || (String(id).length === 24 ? id : null);
-      if (convId) {
-        try {
-          await fetch(`http://localhost:5000/api/history/conversations/${convId}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ title: newTitle, messages: updated.messages }),
-          });
-        } catch (err) {
-          console.error("Failed to persist rename:", err);
-        }
-      }
-    }
+  // Rename chat (now starts inline edit)
+  const handleRenameChat = (id) => {
+    handleStartRename(id);
   };
 
   // Logout
@@ -299,6 +364,17 @@ export default function Chatbot() {
         <div className="text-center">
           <div className="w-16 h-16 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full animate-pulse mx-auto mb-4"></div>
           <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-emerald-50">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading chats...</p>
         </div>
       </div>
     );
@@ -334,7 +410,8 @@ export default function Chatbot() {
 
               <Button
                 onClick={handleNewChat}
-                className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 transition-all duration-200"
+                disabled={submitting || editingChatId !== null}
+                className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 transition-all duration-200 disabled:opacity-50"
               >
                 <Plus className="w-4 h-4 mr-2" />
                 New Chat
@@ -357,44 +434,108 @@ export default function Chatbot() {
             {/* Chat History */}
             <div className="flex-1 overflow-y-auto p-4">
               <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">Recent Chats</h3>
-              <div className="space-y-2">
-                {filteredChatHistory.map((chat) => (
-                  <button
-                    key={chat.id}
-                    className={`w-full text-left p-3 rounded-lg hover:bg-gray-800 transition-colors group ${
-                      chat.id === activeChatId ? "bg-gray-800" : ""
-                    }`}
-                    onClick={() => setActiveChatId(chat.id)}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white truncate">{chat.title}</p>
-                        <p className="text-xs text-gray-400 mt-1">{chat.date}</p>
-                      </div>
-                      <div className="flex gap-1">
-                        <button
-                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-700 rounded transition-all"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleRenameChat(chat.id);
-                          }}
+              {filteredChatHistory.length === 0 ? (
+                <p className="text-gray-500 text-sm">No chats found. Create a new one to start!</p>
+              ) : (
+                <div className="space-y-2">
+                  {filteredChatHistory.map((chat) => {
+                    if (chat.id === editingChatId) {
+                      return (
+                        <div
+                          key={chat.id}
+                          className={`w-full text-left p-3 rounded-lg transition-colors ${
+                            chat.id === activeChatId ? "bg-gray-800" : ""
+                          }`}
                         >
-                          <Edit2 className="w-4 h-4 text-gray-400" />
-                        </button>
-                        <button
-                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-700 rounded transition-all"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteChat(chat.id);
-                          }}
-                        >
-                          <Trash2 className="w-4 h-4 text-gray-400" />
-                        </button>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1 min-w-0">
+                              <Input
+                                ref={titleInputRef}
+                                value={tempTitle}
+                                onChange={(e) => setTempTitle(e.target.value)}
+                                onBlur={() => handleSaveTitle(chat.id)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    handleSaveTitle(chat.id);
+                                  } else if (e.key === "Escape") {
+                                    setEditingChatId(null);
+                                    setTempTitle(originalTitle);
+                                    setOriginalTitle("");
+                                  }
+                                }}
+                                className="text-sm font-medium bg-transparent border-0 border-b border-gray-600 focus:border-white text-white p-0 h-auto"
+                                autoFocus
+                              />
+                              <p className="text-xs text-gray-400 mt-1">{chat.date}</p>
+                            </div>
+                            <div className="flex gap-1">
+                              <button
+                                onClick={() => handleSaveTitle(chat.id)}
+                                className="p-1 text-green-400 hover:text-green-300 transition-colors"
+                                title="Save"
+                              >
+                                <Check className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setEditingChatId(null);
+                                  setTempTitle(originalTitle);
+                                  setOriginalTitle("");
+                                }}
+                                className="p-1 text-gray-400 hover:text-gray-300 transition-colors"
+                                title="Cancel"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <button
+                        key={chat.id}
+                        className={`w-full text-left p-3 rounded-lg hover:bg-gray-800 transition-colors group ${
+                          chat.id === activeChatId ? "bg-gray-800" : ""
+                        }`}
+                        onClick={() => setActiveChatId(chat.id)}
+                        disabled={submitting || editingChatId !== null}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-white truncate">{chat.title}</p>
+                            <p className="text-xs text-gray-400 mt-1">{chat.date}</p>
+                          </div>
+                          <div className="flex gap-1">
+                            <button
+                              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-700 rounded transition-all"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRenameChat(chat.id);
+                              }}
+                              disabled={submitting || editingChatId !== null}
+                            >
+                              <Edit2 className="w-4 h-4 text-gray-400" />
+                            </button>
+                            <button
+                              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-700 rounded transition-all"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteChat(chat.id);
+                              }}
+                              disabled={submitting || editingChatId !== null}
+                            >
+                              <Trash2 className="w-4 h-4 text-gray-400" />
+                            </button>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Footer */}
@@ -437,49 +578,66 @@ export default function Chatbot() {
           )}
           <div className="flex items-center gap-2">
             <MessageSquare className="w-5 h-5 text-green-600" />
-            <h1 className="text-lg font-semibold text-gray-900">AgriBot Chat</h1>
+            <h1 className="text-lg font-semibold text-gray-900">
+              {activeChat ? activeChat.title : "AgriBot Chat"}
+            </h1>
           </div>
         </header>
 
         <div className="flex-1 overflow-y-auto px-6 py-8">
           <div className="max-w-3xl mx-auto space-y-6">
-            {messages.map((message, index) => (
-              <motion.div
-                key={index}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
-                className={`flex gap-4 ${message.role === "user" ? "justify-end" : ""}`}
-              >
-                {message.role === "assistant" && (
-                  <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center flex-shrink-0">
-                    <Sparkles className="w-5 h-5 text-white" />
-                  </div>
-                )}
-                <div
-                  className={`px-5 py-4 rounded-2xl max-w-2xl ${
-                    message.role === "user"
-                      ? "bg-gradient-to-r from-green-500 to-emerald-600 text-white"
-                      : "bg-gray-100 text-gray-900"
-                  }`}
+            {activeChatId ? (
+              messages.map((message, index) => (
+                <motion.div
+                  key={index}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3 }}
+                  className={`flex gap-4 ${message.role === "user" ? "justify-end" : ""}`}
                 >
-                  <p className="text-[15px] leading-relaxed">
-                    {typeof message.content === "string"
-                      ? message.content
-                      : // If it's an object (unexpected), stringify safely for display
-                        JSON.stringify(message.content)}
-                  </p>
-                </div>
-                {message.role === "user" && (
-                  <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center flex-shrink-0">
-                    <span className="text-gray-700 font-medium">
-                      {user?.full_name?.charAt(0) || user?.email?.charAt(0) || "U"}
-                    </span>
+                  {message.role === "assistant" && (
+                    <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center flex-shrink-0">
+                      <Sparkles className="w-5 h-5 text-white" />
+                    </div>
+                  )}
+                  <div
+                    className={`px-5 py-4 rounded-2xl max-w-2xl ${
+                      message.role === "user"
+                        ? "bg-gradient-to-r from-green-500 to-emerald-600 text-white"
+                        : "bg-gray-100 text-gray-900"
+                    }`}
+                  >
+                    <p className="text-[15px] leading-relaxed">
+                      {typeof message.content === "string"
+                        ? message.content
+                        : JSON.stringify(message.content)}
+                    </p>
                   </div>
-                )}
-              </motion.div>
-            ))}
+                  {message.role === "user" && (
+                    <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center flex-shrink-0">
+                      <span className="text-gray-700 font-medium">
+                        {user?.full_name?.charAt(0) || user?.email?.charAt(0) || "U"}
+                      </span>
+                    </div>
+                  )}
+                </motion.div>
+              ))
+            ) : (
+              <div className="text-center py-12">
+                <p className="text-gray-500">Select a chat or create a new one to start messaging.</p>
+              </div>
+            )}
             <div ref={messagesEndRef} />
+            {submitting && (
+              <div className="flex gap-4 justify-start">
+                <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center flex-shrink-0">
+                  <Sparkles className="w-5 h-5 text-white animate-pulse" />
+                </div>
+                <div className="px-5 py-4 bg-gray-100 rounded-2xl">
+                  <p className="text-gray-500">Thinking...</p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -489,12 +647,14 @@ export default function Chatbot() {
               <Input
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                placeholder="Ask me anything about farming..."
-                className="flex-1 h-14 px-6 text-base border-gray-300 focus:border-green-500 focus:ring-green-500"
+                placeholder={activeChatId ? "Ask me anything about farming..." : "Select a chat to message"}
+                disabled={!activeChatId || submitting}
+                className="flex-1 h-14 px-6 text-base border-gray-300 focus:border-green-500 focus:ring-green-500 disabled:opacity-50"
               />
               <Button
                 type="submit"
-                className="h-14 px-6 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 transition-all duration-200"
+                disabled={!activeChatId || !inputValue.trim() || submitting}
+                className="h-14 px-6 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 transition-all duration-200 disabled:opacity-50"
               >
                 <Send className="w-5 h-5" />
               </Button>
@@ -513,4 +673,3 @@ export default function Chatbot() {
     </div>
   );
 }
-
