@@ -1,0 +1,31 @@
+names:
+- artichoke_caterpillar
+- artichoke_healthy
+- blueberry_rust
+- blueberry_healthy
+- banana_healthy
+- banana_sigatoka
+- cocoa_moniliasis
+- cocoa_healthy
+- coffee_rust
+- coffee_healthy
+- raspberry_fly
+- raspberry_healthy
+- ginger_nematode
+- ginger_healthy
+- olive_fly
+- olive_healthy
+- tomato_fly
+- tomato_healthy
+- grape_rot
+- grape_healthy
+nc: 20
+roboflow:
+  license: CC BY 4.0
+  project: plant-disease-ep6jy
+  url: https://universe.roboflow.com/yolo-v8-solrb/plant-disease-ep6jy/dataset/2
+  version: 2
+  workspace: yolo-v8-solrb
+test: /content/Plant-Disease-2/test/images
+train: /content/Plant-Disease-2/train/images
+val: /content/Plant-Disease-2/valid/images
