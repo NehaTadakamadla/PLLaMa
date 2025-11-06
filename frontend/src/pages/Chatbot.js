@@ -22,6 +22,8 @@ import { LlamaOutput } from "../utils/LlamaOutput";
 
 export default function Chatbot() {
   const [user, setUser] = useState(null);
+
+  const [showYolo, setShowYolo] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [chatHistory, setChatHistory] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
@@ -35,6 +37,94 @@ export default function Chatbot() {
   const [originalTitle, setOriginalTitle] = useState("");
   const titleInputRef = useRef(null);
   const messagesEndRef = useRef(null);
+
+  // YOLO detection states and functions
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [detections, setDetections] = useState([]);
+  const [detecting, setDetecting] = useState(false);
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const filePreview = URL.createObjectURL(file);
+
+    // 1️⃣ Show uploaded image immediately in chat
+    const userImageMessage = {
+      role: "user",
+      content: { imageUrl: filePreview },
+    };
+
+    setChatHistory((prev) =>
+      prev.map((chat) =>
+        chat.id === activeChatId
+          ? { ...chat, messages: [...chat.messages, userImageMessage] }
+          : chat
+      )
+    );
+
+    const activeChat = chatHistory.find((chat) => chat.id === activeChatId);
+
+    // 2️⃣ Send image to YOLO backend
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch("http://127.0.0.1:8000/predict", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) throw new Error("Detection failed");
+      const data = await res.json();
+
+      // 3️⃣ Prepare YOLO detection text
+      const yoloText = `🧠 YOLO detected: ${data.detections
+        .map((d) => `${d.class} (${d.confidence}%)`)
+        .join(", ")}`;
+
+      // 4️⃣ Create YOLO assistant messages
+      const yoloMessages = [
+        { role: "assistant", content: yoloText },
+        { role: "assistant", content: { imageUrl: data.annotated_image } },
+      ];
+
+      // 5️⃣ Update frontend chat
+      setChatHistory((prev) =>
+        prev.map((chat) =>
+          chat.id === activeChatId
+            ? { ...chat, messages: [...chat.messages, ...yoloMessages] }
+            : chat
+        )
+      );
+
+      // 6️⃣ Save everything (user image + YOLO detections) to MongoDB
+      if (activeChat) {
+        await fetch(
+          `http://localhost:5000/api/history/conversations/${activeChatId}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
+            },
+            body: JSON.stringify({
+              title: activeChat.title,
+              messages: [
+                ...activeChat.messages,
+                userImageMessage,
+                ...yoloMessages,
+              ],
+            }),
+          }
+        );
+      }
+    } catch (error) {
+      console.error("❌ YOLO detection failed:", error);
+      alert("Something went wrong while detecting.");
+    }
+  };
 
   const API_BASE = "http://localhost:5000/api/history";
 
@@ -104,7 +194,10 @@ export default function Chatbot() {
     try {
       const res = await fetch(`${API_BASE}/conversations/${convId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify(payload),
       });
       return res.ok;
@@ -121,7 +214,10 @@ export default function Chatbot() {
     try {
       const res = await fetch(`${API_BASE}/conversations`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify(payload),
       });
       if (res.ok) {
@@ -236,7 +332,10 @@ export default function Chatbot() {
         user_name,
         use_web_search: useWebSearch,
       });
-      const assistantMessage = { role: "assistant", content: String(aiResponse) };
+      const assistantMessage = {
+        role: "assistant",
+        content: String(aiResponse),
+      };
 
       // Optimistically add assistant message
       setChatHistory((prev) =>
@@ -248,7 +347,10 @@ export default function Chatbot() {
       );
 
       // Update on server
-      const activeChatCopy = { ...activeChat, messages: [...messages, userMessage, assistantMessage] };
+      const activeChatCopy = {
+        ...activeChat,
+        messages: [...messages, userMessage, assistantMessage],
+      };
       const success = await updateConversation(activeChatId, {
         title: activeChatCopy.title,
         messages: activeChatCopy.messages,
@@ -268,13 +370,19 @@ export default function Chatbot() {
       setChatHistory((prev) =>
         prev.map((chat) =>
           chat.id === activeChatId
-            ? { ...chat, messages: [...chat.messages.slice(0, -1), errorMessage] } // Remove optimistic assistant, add error
+            ? {
+                ...chat,
+                messages: [...chat.messages.slice(0, -1), errorMessage],
+              } // Remove optimistic assistant, add error
             : chat
         )
       );
 
       // Still try to save the user msg + error
-      const activeChatCopy = { ...activeChat, messages: [...messages, userMessage, errorMessage] };
+      const activeChatCopy = {
+        ...activeChat,
+        messages: [...messages, userMessage, errorMessage],
+      };
       await updateConversation(activeChatId, {
         title: activeChatCopy.title,
         messages: activeChatCopy.messages,
@@ -303,7 +411,8 @@ export default function Chatbot() {
       messages: [
         {
           role: "assistant",
-          content: "Hello! I'm AgriBot, your AI farming assistant. How can I help you today?",
+          content:
+            "Hello! I'm AgriBot, your AI farming assistant. How can I help you today?",
         },
       ],
     };
@@ -456,9 +565,13 @@ export default function Chatbot() {
 
             {/* Chat History */}
             <div className="flex-1 overflow-y-auto p-4">
-              <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">Recent Chats</h3>
+              <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">
+                Recent Chats
+              </h3>
               {filteredChatHistory.length === 0 ? (
-                <p className="text-gray-500 text-sm">No chats found. Create a new one to start!</p>
+                <p className="text-gray-500 text-sm">
+                  No chats found. Create a new one to start!
+                </p>
               ) : (
                 <div className="space-y-2">
                   {filteredChatHistory.map((chat) => {
@@ -490,7 +603,9 @@ export default function Chatbot() {
                                 className="text-sm font-medium bg-transparent border-0 border-b border-gray-600 focus:border-white text-white p-0 h-auto"
                                 autoFocus
                               />
-                              <p className="text-xs text-gray-400 mt-1">{chat.date}</p>
+                              <p className="text-xs text-gray-400 mt-1">
+                                {chat.date}
+                              </p>
                             </div>
                             <div className="flex gap-1">
                               <button
@@ -528,8 +643,12 @@ export default function Chatbot() {
                       >
                         <div className="flex items-start justify-between">
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-white truncate">{chat.title}</p>
-                            <p className="text-xs text-gray-400 mt-1">{chat.date}</p>
+                            <p className="text-sm font-medium text-white truncate">
+                              {chat.title}
+                            </p>
+                            <p className="text-xs text-gray-400 mt-1">
+                              {chat.date}
+                            </p>
                           </div>
                           <div className="flex gap-1">
                             <button
@@ -566,12 +685,18 @@ export default function Chatbot() {
               <div className="flex items-center gap-3 mb-3 p-3 bg-gray-800 rounded-lg">
                 <div className="w-10 h-10 bg-green-600 rounded-full flex items-center justify-center">
                   <span className="text-white font-medium">
-                    {user?.full_name?.charAt(0).toUpperCase() || user?.email?.charAt(0).toUpperCase() || "U"}
+                    {user?.full_name?.charAt(0).toUpperCase() ||
+                      user?.email?.charAt(0).toUpperCase() ||
+                      "U"}
                   </span>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate">{user?.username || "User"}</p>
-                  <p className="text-xs text-gray-400 truncate">{user?.email}</p>
+                  <p className="text-sm font-medium text-white truncate">
+                    {user?.username || "User"}
+                  </p>
+                  <p className="text-xs text-gray-400 truncate">
+                    {user?.email}
+                  </p>
                 </div>
               </div>
 
@@ -616,7 +741,9 @@ export default function Chatbot() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3 }}
-                  className={`flex gap-4 ${message.role === "user" ? "justify-end" : ""}`}
+                  className={`flex gap-4 ${
+                    message.role === "user" ? "justify-end" : ""
+                  }`}
                 >
                   {message.role === "assistant" && (
                     <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center flex-shrink-0">
@@ -630,26 +757,43 @@ export default function Chatbot() {
                         : "bg-gray-100 text-gray-900"
                     }`}
                   >
-                    {
-                      (
-                        message.role === "user" && 
-                        <p className="text-[15px] leading-relaxed">
-                          {typeof message.content === "string"
-                            ? message.content
-                            : JSON.stringify(message.content)}
-                        </p>
-                      ) 
-                      ||
-                      (
-                        message.role === "assistant" && 
-                        <LlamaOutput content={message.content} />
-                      )
-                    }
+                    {message.role === "user" ? (
+                      <p className="text-[15px] leading-relaxed">
+                        {typeof message.content === "string" ? (
+                          message.content
+                        ) : message.content?.imageUrl ? (
+                          <img
+                            src={message.content.imageUrl}
+                            alt="Uploaded"
+                            className="rounded-xl border w-80 shadow-md cursor-pointer hover:opacity-90"
+                          />
+                        ) : null}
+                      </p>
+                    ) : message.role === "assistant" ? (
+                      <>
+                        {typeof message.content === "string" ? (
+                          <LlamaOutput content={message.content} />
+                        ) : message.content && message.content.imageUrl ? (
+                          <div className="mt-3">
+                            <img
+                              src={message.content.imageUrl}
+                              alt="YOLO Detection Result"
+                              className="rounded-xl border w-80 shadow-md cursor-pointer hover:opacity-90"
+                              onClick={() =>
+                                window.open(message.content.imageUrl, "_blank")
+                              }
+                            />
+                          </div>
+                        ) : null}
+                      </>
+                    ) : null}
                   </div>
                   {message.role === "user" && (
                     <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center flex-shrink-0">
                       <span className="text-gray-700 font-medium">
-                        {user?.full_name?.charAt(0).toUpperCase() || user?.email?.charAt(0).toUpperCase() || "U"}
+                        {user?.full_name?.charAt(0).toUpperCase() ||
+                          user?.email?.charAt(0).toUpperCase() ||
+                          "U"}
                       </span>
                     </div>
                   )}
@@ -657,7 +801,9 @@ export default function Chatbot() {
               ))
             ) : (
               <div className="text-center py-12">
-                <p className="text-gray-500">Select a chat or create a new one to start messaging.</p>
+                <p className="text-gray-500">
+                  Select a chat or create a new one to start messaging.
+                </p>
               </div>
             )}
             <div ref={messagesEndRef} />
@@ -680,17 +826,35 @@ export default function Chatbot() {
               <Input
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                placeholder={activeChatId ? "Ask me anything about farming..." : "Select a chat to message"}
+                placeholder={
+                  activeChatId
+                    ? "Ask me anything about farming..."
+                    : "Select a chat to message"
+                }
                 disabled={!activeChatId || submitting}
                 className="flex-1 h-14 px-6 text-base border-gray-300 focus:border-green-500 focus:ring-green-500 disabled:opacity-50"
               />
               <div className="flex items-center gap-2">
+                {/* File Upload Button */}
+                <label className="h-10 w-10 flex items-center justify-center rounded bg-gray-100 text-gray-600 hover:opacity-90 cursor-pointer">
+                  <Plus className="w-4 h-4" />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
+                </label>
                 {/* Web search toggle button */}
                 <button
                   type="button"
                   onClick={() => setUseWebSearch((s) => !s)}
                   title="Toggle web search"
-                  className={`h-10 w-10 flex items-center justify-center rounded ${useWebSearch ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-600'} hover:opacity-90 transition-colors`}
+                  className={`h-10 w-10 flex items-center justify-center rounded ${
+                    useWebSearch
+                      ? "bg-green-500 text-white"
+                      : "bg-gray-100 text-gray-600"
+                  } hover:opacity-90 transition-colors`}
                 >
                   <Globe className="w-4 h-4" />
                 </button>
