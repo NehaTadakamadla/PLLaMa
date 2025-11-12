@@ -1,5 +1,5 @@
 // backend/src/server.js
-
+import translateRoute from "./routes/translate.js";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -28,8 +28,11 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/history", historyRoutes);
 app.use("/api/model", modelRouter); // moved after app creation
 app.use("/api/users", usersRouter);
+app.use("/api/translate", translateRoute);
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
+

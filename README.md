@@ -130,6 +130,8 @@ You should see:
 cd backend
 python -m venv venv
 venv\Scripts\activate    # (Windows)
+pip install "fastapi[all]"
+pip install ultralytics
 # OR
 source venv/bin/activate # (Mac/Linux)
 ```
